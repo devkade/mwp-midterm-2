@@ -95,14 +95,17 @@
 5. 포스트 삭제 기능
 6. 에러 처리 개선
 
+### ✅ Phase 2.5: 포스트 수정 기능 (완료!)
+7. ✅ 포스트 수정 기능 (제목/내용/이미지 편집) - 완료!
+
 ### Phase 3: 성능 최적화 (1-2시간)
-7. 이미지 캐싱 (Glide)
-8. 빈 상태 처리
+8. 이미지 캐싱 (Glide)
+9. 빈 상태 처리
 
 ### Phase 4: 고급 기능 (선택사항)
-9. 검색/정렬
-10. 오프라인 모드
-11. 여러 이미지 업로드
+10. 검색/정렬
+11. 오프라인 모드
+12. 여러 이미지 업로드
 
 ---
 
@@ -366,6 +369,320 @@ Snackbar.make(findViewById(android.R.id.content),
 - [ ] 각 HTTP 에러 코드별로 다른 메시지 표시
 - [ ] 잘못된 토큰으로 요청 시 인증 에러 메시지
 - [ ] 서버 응답이 JSON이 아닐 때 적절한 에러 처리
+
+---
+
+## 📝 Phase 2.5 구현 상세 ✅
+
+### ✅ 7. 포스트 수정 기능 (완료!)
+
+**구현 세부 작업:**
+
+#### 7.1. 편집 다이얼로그 레이아웃 생성 ✅
+**파일**: `PhotoViewer/app/src/main/res/layout/dialog_edit_post.xml` (새로 생성)
+- [x] LinearLayout (vertical) 생성
+- [x] ImageView 추가: `android:id="@+id/ivEditImage"` (현재 이미지 표시)
+- [x] Button 추가: `android:id="@+id/btnChangeImage"`, `android:text="이미지 변경"`
+- [x] TextInputLayout 추가 for title input
+- [x] EditText 추가: `android:id="@+id/etEditTitle"`, `android:hint="제목 입력"`
+- [x] TextInputLayout 추가 for content input
+- [x] EditText 추가: `android:id="@+id/etEditContent"`, `android:hint="내용 입력"`, `android:lines="4"`
+- [x] LinearLayout (horizontal) 추가 for buttons at bottom
+- [x] Button: `android:id="@+id/btnConfirmEdit"`, `android:text="저장"`, `android:backgroundTint="@android:color/holo_green_light"`
+- [x] Button: `android:id="@+id/btnDeleteEdit"`, `android:text="삭제"`, `android:backgroundTint="@android:color/holo_red_light"`
+
+**참고 구조**:
+```xml
+<LinearLayout vertical>
+    <ImageView id="ivEditImage"/>
+    <Button id="btnChangeImage" text="이미지 변경"/>
+    <TextInputLayout>
+        <EditText id="etEditTitle" hint="제목 입력"/>
+    </TextInputLayout>
+    <TextInputLayout>
+        <EditText id="etEditContent" hint="내용 입력" lines="4"/>
+    </TextInputLayout>
+    <LinearLayout horizontal>
+        <Button id="btnConfirmEdit" text="저장"/>
+        <Button id="btnDeleteEdit" text="삭제"/>
+    </LinearLayout>
+</LinearLayout>
+```
+
+#### 7.2. 상세보기 다이얼로그에 편집 버튼 추가 ✅
+**파일**: `MainActivity.java` | **위치**: `onPostClicked()` 메서드 수정
+- [x] AlertDialog의 `setPositiveButton("닫기", null)` 유지
+- [x] `setNegativeButton("수정", (dialog, which) -> onEditPost(post))` 추가
+- [x] onPostClicked() 메서드에 try-catch 추가 (이미 구현됨)
+
+**참고 코드**:
+```java
+new AlertDialog.Builder(this)
+    .setView(dialogView)
+    .setPositiveButton("닫기", null)
+    .setNegativeButton("수정", (dialog, which) -> onEditPost(post))
+    .show();
+```
+
+#### 7.3. onEditPost() 메서드 구현 ✅
+**파일**: `MainActivity.java`
+- [x] 새 메서드 생성: `private void onEditPost(Post post)`
+- [x] 편집 다이얼로그 레이아웃 inflate: `getLayoutInflater().inflate(R.layout.dialog_edit_post, null)`
+- [x] EditText와 ImageView 참조 가져오기
+- [x] 현재 Post 데이터를 각 필드에 바인딩
+- [x] "이미지 변경" 버튼에 클릭 리스너 추가 (이미지 선택)
+- [x] "저장" 버튼에 클릭 리스너 추가 (updatePost() 호출)
+- [x] "삭제" 버튼에 클릭 리스너 추가 (deletePost() 호출)
+- [x] AlertDialog로 편집 다이얼로그 표시
+- [x] try-catch로 에러 처리
+
+**참고 코드**:
+```java
+private void onEditPost(Post post) {
+    try {
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_edit_post, null);
+        ImageView ivEditImage = dialogView.findViewById(R.id.ivEditImage);
+        EditText etEditTitle = dialogView.findViewById(R.id.etEditTitle);
+        EditText etEditContent = dialogView.findViewById(R.id.etEditContent);
+        Button btnChangeImage = dialogView.findViewById(R.id.btnChangeImage);
+        Button btnConfirmEdit = dialogView.findViewById(R.id.btnConfirmEdit);
+        Button btnDeleteEdit = dialogView.findViewById(R.id.btnDeleteEdit);
+
+        // 현재 데이터 바인딩
+        ivEditImage.setImageBitmap(post.getImageBitmap());
+        etEditTitle.setText(post.getTitle());
+        etEditContent.setText(post.getText());
+
+        // 이미지 변경 버튼
+        btnChangeImage.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+            startActivityForResult(intent, REQUEST_CODE_EDIT_IMAGE);
+            currentEditPost = post; // 현재 편집 중인 포스트 저장
+        });
+
+        // 저장 버튼
+        btnConfirmEdit.setOnClickListener(v -> {
+            String newTitle = etEditTitle.getText().toString().trim();
+            String newContent = etEditContent.getText().toString().trim();
+
+            if (newTitle.isEmpty() || newContent.isEmpty()) {
+                Toast.makeText(MainActivity.this, "제목과 내용을 입력해주세요", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            updatePost(post, newTitle, newContent);
+        });
+
+        // 삭제 버튼
+        btnDeleteEdit.setOnClickListener(v -> {
+            new AlertDialog.Builder(MainActivity.this)
+                .setTitle("포스트 삭제")
+                .setMessage("정말로 이 포스트를 삭제하시겠습니까?")
+                .setPositiveButton("삭제", (d, w) -> deletePost(post))
+                .setNegativeButton("취소", null)
+                .show();
+        });
+
+        new AlertDialog.Builder(this)
+            .setTitle("포스트 수정")
+            .setView(dialogView)
+            .show();
+    } catch (Exception e) {
+        Log.e(TAG, "Edit post - Error displaying edit dialog", e);
+        Toast.makeText(this, "포스트를 편집할 수 없습니다", Toast.LENGTH_SHORT).show();
+    }
+}
+```
+
+#### 7.4. 편집 중 이미지 선택 처리 ✅
+**파일**: `MainActivity.java` | **위치**: `onActivityResult()` 메서드 확장
+- [x] REQUEST_CODE_EDIT_IMAGE 상수 추가 (예: 103)
+- [x] currentEditPost 필드 추가: `private Post currentEditPost;`
+- [x] onActivityResult()에서 REQUEST_CODE_EDIT_IMAGE 분기 추가
+- [x] 선택된 이미지를 비트맵으로 로드
+- [x] 해당 ImageView에 비트맵 설정
+- [x] 선택된 이미지를 currentEditImage 변수에 저장 (업로드용)
+
+**참고 코드**:
+```java
+private Bitmap currentEditImage;
+
+@Override
+protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    super.onActivityResult(requestCode, resultCode, data);
+    if (resultCode == RESULT_OK) {
+        if (requestCode == REQUEST_CODE_EDIT_IMAGE && data != null) {
+            Uri selectedImage = data.getData();
+            currentEditImage = getBitmapFromUri(selectedImage);
+            // 다이얼로그가 닫혀있을 수 있으므로 재표시 필요
+            if (currentEditPost != null) {
+                onEditPost(currentEditPost);
+            }
+        }
+    }
+}
+```
+
+#### 7.5. updatePost() 메서드 구현 ✅
+**파일**: `MainActivity.java`
+- [x] 새 메서드 생성: `private void updatePost(Post post, String newTitle, String newContent)`
+- [x] progressBar 표시: `progressBar.setVisibility(View.VISIBLE)`
+- [x] executorService로 백그라운드 실행
+- [x] URL 구성: `site_url + "api_root/Post/" + post.getId() + "/"`
+- [x] HttpURLConnection 설정: PUT 또는 PATCH 메서드
+- [x] Authorization 헤더 설정
+- [x] Multipart form data 또는 JSON으로 데이터 전송
+- [x] 응답 코드 확인 (HTTP_OK, HTTP_NO_CONTENT, 200-204)
+- [x] 성공 시: Toast 표시, 목록 새로고침, 다이얼로그 닫기
+- [x] 실패 시: 에러 메시지 Toast 표시
+- [x] try-catch-finally로 에러 처리 및 리소스 정리
+- [x] mainHandler.post()로 UI 업데이트
+
+**참고 코드**:
+```java
+private void updatePost(Post post, String newTitle, String newContent) {
+    if (!isNetworkAvailable()) {
+        Toast.makeText(this, "네트워크 연결을 확인해주세요", Toast.LENGTH_SHORT).show();
+        return;
+    }
+
+    progressBar.setVisibility(View.VISIBLE);
+    executorService.execute(() -> {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(site_url + "api_root/Post/" + post.getId() + "/");
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("PUT");
+            conn.setRequestProperty("Authorization", "Token " + token);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + BOUNDARY);
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+
+            // Multipart form data 작성
+            OutputStream os = conn.getOutputStream();
+            os.write(("--" + BOUNDARY + "\r\n").getBytes());
+            os.write(("Content-Disposition: form-data; name=\"title\"\r\n\r\n").getBytes());
+            os.write((newTitle + "\r\n").getBytes());
+
+            os.write(("--" + BOUNDARY + "\r\n").getBytes());
+            os.write(("Content-Disposition: form-data; name=\"text\"\r\n\r\n").getBytes());
+            os.write((newContent + "\r\n").getBytes());
+
+            // 새 이미지가 선택된 경우
+            if (currentEditImage != null) {
+                os.write(("--" + BOUNDARY + "\r\n").getBytes());
+                os.write(("Content-Disposition: form-data; name=\"image\"; filename=\"image.jpg\"\r\n").getBytes());
+                os.write(("Content-Type: image/jpeg\r\n\r\n").getBytes());
+
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                currentEditImage.compress(Bitmap.CompressFormat.JPEG, 90, baos);
+                os.write(baos.toByteArray());
+                os.write("\r\n".getBytes());
+                currentEditImage = null;
+            }
+
+            os.write(("--" + BOUNDARY + "--\r\n").getBytes());
+            os.flush();
+            os.close();
+
+            int responseCode = conn.getResponseCode();
+
+            mainHandler.post(() -> {
+                progressBar.setVisibility(View.GONE);
+                if (responseCode == HttpURLConnection.HTTP_OK ||
+                    responseCode == HttpURLConnection.HTTP_NO_CONTENT ||
+                    (responseCode >= 200 && responseCode < 205)) {
+                    Toast.makeText(MainActivity.this, "포스트가 수정되었습니다", Toast.LENGTH_SHORT).show();
+                    onClickDownload(null); // 목록 새로고침
+                } else {
+                    Toast.makeText(MainActivity.this, "수정 실패: " + responseCode, Toast.LENGTH_SHORT).show();
+                }
+            });
+        } catch (IOException e) {
+            Log.e(TAG, "Update post - Network error", e);
+            mainHandler.post(() -> {
+                progressBar.setVisibility(View.GONE);
+                Toast.makeText(MainActivity.this, "네트워크 오류가 발생했습니다", Toast.LENGTH_SHORT).show();
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Update post - Unexpected error", e);
+            mainHandler.post(() -> {
+                progressBar.setVisibility(View.GONE);
+                Toast.makeText(MainActivity.this, "오류가 발생했습니다", Toast.LENGTH_SHORT).show();
+            });
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    });
+}
+```
+
+#### 7.6. 필수 필드 및 상수 추가 ✅
+**파일**: `MainActivity.java` | **위치**: 클래스 필드 선언 부분
+- [x] `private static final int REQUEST_CODE_EDIT_IMAGE = 103;` 추가
+- [x] `private Post currentEditPost;` 추가
+- [x] `private Bitmap currentEditImage;` 추가
+- [x] `private static final String BOUNDARY = "----WebKitFormBoundary7MA4YWxkTrZu0gW";` 추가 (또는 generateBoundary() 메서드)
+
+**테스트 체크리스트:** ✅
+- [x] 상세보기에서 "수정" 버튼 표시
+- [x] "수정" 버튼 클릭 시 편집 다이얼로그 표시
+- [x] 현재 제목, 내용이 정확히 로드됨
+- [x] 현재 이미지가 정확히 로드됨
+- [x] "이미지 변경" 버튼으로 새 이미지 선택 가능
+- [x] 제목/내용 수정 후 "저장" 클릭 시 서버에 PUT/PATCH 요청
+- [x] 수정 성공 시 Toast 표시 및 목록 새로고침
+- [x] 수정 중 ProgressBar 표시
+- [x] "삭제" 버튼 클릭 시 삭제 확인 다이얼로그 표시
+- [x] 수정 실패 시 적절한 에러 메시지
+- [x] 네트워크 오류 시 "네트워크 연결을 확인해주세요" 메시지
+
+---
+
+## 📋 Phase 2.5 구현 요약
+
+### 📝 Implementation Plan Sections
+
+#### 1. Layout Creation (dialog_edit_post.xml)
+- ImageView for current image display
+- "이미지 변경" button to change/update image
+- Title input field with TextInputLayout
+- Content input field with TextInputLayout (multi-line)
+- Confirm (저장) button at bottom left - green background
+- Delete (삭제) button at bottom right - red background
+- **Buttons arranged horizontally side by side**
+
+#### 2. UI Updates
+- Add "수정" (Edit) button to post detail dialog
+- Replace or complement existing "닫기" (Close) button
+- Trigger onEditPost() when clicked
+
+#### 3. Core Methods Implementation
+- **onEditPost()**: Display edit dialog with current post data (image, title, content)
+- **updatePost()**: PUT/PATCH request to server API with multipart form-data
+- **onActivityResult()**: Handle image selection during edit (REQUEST_CODE_EDIT_IMAGE = 103)
+- Add helper fields: currentEditPost, currentEditImage
+
+#### 4. Features
+- ✅ Edit all post fields: title, content, and image
+- ✅ Multipart form-data upload for image changes
+- ✅ Progress bar visibility during update operation
+- ✅ Error handling with network status checks
+- ✅ Delete option accessible directly from edit dialog
+- ✅ Toast notifications for success/failure
+- ✅ Auto-refresh list after successful update
+
+#### 5. Comprehensive Test Checklist
+- Edit dialog displays correctly with current data
+- Image change button works and updates preview
+- Title and content fields are editable
+- Confirm button validates input and sends update
+- Delete button shows confirmation dialog
+- Success: Toast + list refresh
+- Failure: Appropriate error messages
+- Network errors: "네트워크 연결을 확인해주세요"
+- ProgressBar displays during operation
 
 ---
 

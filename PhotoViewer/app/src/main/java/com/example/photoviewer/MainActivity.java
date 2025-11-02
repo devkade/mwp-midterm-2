@@ -30,6 +30,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -47,6 +48,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private static final int PICK_IMAGE_REQUEST = 1;
+    private static final int REQUEST_CODE_EDIT_IMAGE = 103;
 
     private RecyclerView recyclerView;
     private SwipeRefreshLayout swipeRefreshLayout;
@@ -55,6 +57,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView textView;
     private Uri selectedImageUri;
     private ProgressBar progressBar;
+    private Post currentEditPost;
+    private Bitmap currentEditImage;
 
     private final String site_url = "http://10.0.2.2:8000/";
     private final String token = "7aba936bb4d969ede07dbaf5c1c9a14a37e21fb0";
@@ -202,6 +206,7 @@ public class MainActivity extends AppCompatActivity {
             ImageView ivPostImage = dialogView.findViewById(R.id.ivPostImage);
             TextView tvPostTitle = dialogView.findViewById(R.id.tvPostTitle);
             TextView tvPostText = dialogView.findViewById(R.id.tvPostText);
+            android.widget.Button btnDelete = dialogView.findViewById(R.id.btnDelete);
 
             // Post 데이터로 뷰 채우기
             if (post.getImageBitmap() != null) {
@@ -210,11 +215,21 @@ public class MainActivity extends AppCompatActivity {
             tvPostTitle.setText(post.getTitle());
             tvPostText.setText(post.getText());
 
-            // AlertDialog로 표시
-            new AlertDialog.Builder(this)
+            // AlertDialog 생성 및 보여주기
+            AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(dialogView)
-                .setNegativeButton("닫기", null)
+                .setPositiveButton("닫기", null)
+                .setNegativeButton("수정", (d, which) -> {
+                    d.dismiss();
+                    onEditPost(post);
+                })
                 .show();
+
+            // 삭제 버튼 클릭 핸들러
+            btnDelete.setOnClickListener(v -> {
+                dialog.dismiss(); // 현재 다이얼로그 닫기
+                showDeleteConfirmDialog(post); // 삭제 확인 다이얼로그 표시
+            });
 
             Log.d(TAG, "onPostClicked: dialog shown for post: " + post.getTitle());
 
@@ -230,6 +245,108 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void showDeleteConfirmDialog(Post post) {
+        try {
+            new AlertDialog.Builder(this)
+                .setTitle("포스트 삭제")
+                .setMessage("정말로 이 포스트를 삭제하시겠습니까?")
+                .setPositiveButton("삭제", (dialog, which) -> {
+                    Log.d(TAG, "Delete confirmed for post: " + post.getTitle());
+                    deletePost(post);
+                })
+                .setNegativeButton("취소", null)
+                .show();
+        } catch (Exception e) {
+            Log.e(TAG, "showDeleteConfirmDialog error: " + e.getMessage(), e);
+            Toast.makeText(this, "삭제 확인 대화를 표시할 수 없습니다", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void onEditPost(Post post) {
+        try {
+            if (post == null) {
+                Toast.makeText(this, "포스트를 편집할 수 없습니다", Toast.LENGTH_SHORT).show();
+                Log.w(TAG, "onEditPost: post is null");
+                return;
+            }
+
+            // 편집 다이얼로그 레이아웃 inflate
+            View dialogView = getLayoutInflater().inflate(R.layout.dialog_edit_post, null);
+
+            ImageView ivEditImage = dialogView.findViewById(R.id.ivEditImage);
+            com.google.android.material.textfield.TextInputEditText etEditTitle =
+                    dialogView.findViewById(R.id.etEditTitle);
+            com.google.android.material.textfield.TextInputEditText etEditContent =
+                    dialogView.findViewById(R.id.etEditContent);
+            android.widget.Button btnChangeImage = dialogView.findViewById(R.id.btnChangeImage);
+            android.widget.Button btnConfirmEdit = dialogView.findViewById(R.id.btnConfirmEdit);
+            android.widget.Button btnDeleteEdit = dialogView.findViewById(R.id.btnDeleteEdit);
+
+            // 현재 포스트 데이터 바인딩
+            // 새로 선택된 이미지가 있으면 그것을 표시, 없으면 기존 이미지 표시
+            if (currentEditImage != null) {
+                ivEditImage.setImageBitmap(currentEditImage);
+            } else if (post.getImageBitmap() != null) {
+                ivEditImage.setImageBitmap(post.getImageBitmap());
+            }
+            etEditTitle.setText(post.getTitle());
+            etEditContent.setText(post.getText());
+
+            // 이미지 변경 버튼 클릭 핸들러
+            btnChangeImage.setOnClickListener(v -> {
+                Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+                currentEditPost = post;
+                startActivityForResult(intent, REQUEST_CODE_EDIT_IMAGE);
+            });
+
+            // 저장 버튼 클릭 핸들러
+            btnConfirmEdit.setOnClickListener(v -> {
+                String newTitle = etEditTitle.getText().toString().trim();
+                String newContent = etEditContent.getText().toString().trim();
+
+                if (newTitle.isEmpty()) {
+                    Toast.makeText(MainActivity.this, "제목을 입력해주세요", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (newContent.isEmpty()) {
+                    Toast.makeText(MainActivity.this, "내용을 입력해주세요", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                updatePost(post, newTitle, newContent);
+            });
+
+            // 삭제 버튼 클릭 핸들러
+            btnDeleteEdit.setOnClickListener(v -> {
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("포스트 삭제")
+                    .setMessage("정말로 이 포스트를 삭제하시겠습니까?")
+                    .setPositiveButton("삭제", (d, w) -> deletePost(post))
+                    .setNegativeButton("취소", null)
+                    .show();
+            });
+
+            // 편집 다이얼로그 표시
+            new AlertDialog.Builder(this)
+                .setTitle("포스트 수정")
+                .setView(dialogView)
+                .setNegativeButton("취소", null)
+                .show();
+
+            Log.d(TAG, "onEditPost: edit dialog shown for post: " + post.getTitle());
+
+        } catch (NullPointerException e) {
+            Log.e(TAG, "onEditPost - NullPointerException: " + e.getMessage(), e);
+            Toast.makeText(this, "포스트 데이터를 불러올 수 없습니다", Toast.LENGTH_SHORT).show();
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "onEditPost - IllegalStateException: " + e.getMessage(), e);
+            Toast.makeText(this, "다이얼로그를 표시할 수 없습니다", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Log.e(TAG, "onEditPost - Unexpected error: " + e.getMessage(), e);
+            Toast.makeText(this, "포스트를 편집할 수 없습니다", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     public void onClickUpload(View v) {
         // 갤러리에서 이미지 선택
         Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
@@ -241,15 +358,44 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
-        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
-            selectedImageUri = data.getData();
-            Log.d(TAG, "Image selected: " + selectedImageUri);
+        if (resultCode == RESULT_OK && data != null) {
+            Uri selectedImage = data.getData();
+            Log.d(TAG, "Image selected: " + selectedImage);
 
-            if (selectedImageUri != null) {
-                // 제목/내용 입력 다이얼로그 표시
-                showUploadDialog(selectedImageUri);
+            if (requestCode == PICK_IMAGE_REQUEST) {
+                // 새 포스트 업로드용 이미지 선택
+                selectedImageUri = selectedImage;
+                if (selectedImageUri != null) {
+                    showUploadDialog(selectedImageUri);
+                }
+            } else if (requestCode == REQUEST_CODE_EDIT_IMAGE) {
+                // 포스트 편집용 이미지 선택
+                try {
+                    currentEditImage = getBitmapFromUri(selectedImage);
+                    if (currentEditImage != null && currentEditPost != null) {
+                        // 편집 다이얼로그 다시 표시 (선택된 이미지 포함)
+                        onEditPost(currentEditPost);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error loading image for edit: " + e.getMessage(), e);
+                    Toast.makeText(this, "이미지를 로드할 수 없습니다", Toast.LENGTH_SHORT).show();
+                }
             }
         }
+    }
+
+    private Bitmap getBitmapFromUri(Uri uri) {
+        try {
+            InputStream inputStream = getContentResolver().openInputStream(uri);
+            if (inputStream != null) {
+                Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
+                inputStream.close();
+                return bitmap;
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Error getting bitmap from URI: " + e.getMessage(), e);
+        }
+        return null;
     }
 
     private void showUploadDialog(Uri imageUri) {
@@ -448,5 +594,153 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return fileName;
+    }
+
+    private void updatePost(Post post, String newTitle, String newContent) {
+        if (post == null) {
+            Toast.makeText(this, "포스트를 업데이트할 수 없습니다", Toast.LENGTH_SHORT).show();
+            Log.w(TAG, "updatePost: post is null");
+            return;
+        }
+
+        progressBar.setVisibility(View.VISIBLE);
+        executorService.execute(() -> {
+            HttpURLConnection conn = null;
+            DataOutputStream dos = null;
+
+            String lineEnd = "\r\n";
+            String twoHyphens = "--";
+            String boundary = "===boundary===" + System.currentTimeMillis() + "===";
+
+            try {
+                URL url = new URL(site_url + "api_root/Post/" + post.getId() + "/");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("PUT");
+                conn.setRequestProperty("Authorization", "Token " + token);
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                dos = new DataOutputStream(conn.getOutputStream());
+
+                // 제목 필드 작성
+                dos.writeBytes(twoHyphens + boundary + lineEnd);
+                dos.writeBytes("Content-Disposition: form-data; name=\"title\"" + lineEnd + lineEnd);
+                dos.writeBytes(newTitle + lineEnd);
+
+                // 내용 필드 작성
+                dos.writeBytes(twoHyphens + boundary + lineEnd);
+                dos.writeBytes("Content-Disposition: form-data; name=\"text\"" + lineEnd + lineEnd);
+                dos.writeBytes(newContent + lineEnd);
+
+                // 새 이미지가 선택된 경우만 포함
+                if (currentEditImage != null) {
+                    dos.writeBytes(twoHyphens + boundary + lineEnd);
+                    dos.writeBytes("Content-Disposition: form-data; name=\"image\"; filename=\"image.jpg\"" + lineEnd);
+                    dos.writeBytes("Content-Type: image/jpeg" + lineEnd + lineEnd);
+
+                    // 이미지 데이터 작성
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    currentEditImage.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, baos);
+                    dos.write(baos.toByteArray());
+                    dos.writeBytes(lineEnd);
+
+                    currentEditImage = null; // 사용 후 초기화
+                }
+
+                // 경계선 끝
+                dos.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
+                dos.flush();
+                dos.close();
+
+                int responseCode = conn.getResponseCode();
+                Log.d(TAG, "Update response code: " + responseCode);
+
+                mainHandler.post(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    if (responseCode == HttpURLConnection.HTTP_OK ||
+                        responseCode == HttpURLConnection.HTTP_NO_CONTENT ||
+                        (responseCode >= 200 && responseCode < 205)) {
+                        Toast.makeText(MainActivity.this, "포스트가 수정되었습니다", Toast.LENGTH_SHORT).show();
+                        Log.d(TAG, "Post #" + post.getId() + " updated successfully");
+                        // 수정 후 목록 새로고침
+                        onClickDownload(null);
+                    } else {
+                        Toast.makeText(MainActivity.this, "수정 실패: HTTP " + responseCode, Toast.LENGTH_SHORT).show();
+                        Log.e(TAG, "Update failed with code: " + responseCode);
+                    }
+                });
+
+            } catch (IOException e) {
+                Log.e(TAG, "Update error - Network error: " + e.getMessage(), e);
+                mainHandler.post(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    Toast.makeText(MainActivity.this, "네트워크 오류가 발생했습니다", Toast.LENGTH_SHORT).show();
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "Update error - Unexpected error: " + e.getMessage(), e);
+                mainHandler.post(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    Toast.makeText(MainActivity.this, "오류가 발생했습니다: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
+            } finally {
+                if (dos != null) {
+                    try {
+                        dos.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+        });
+    }
+
+    private void deletePost(Post post) {
+        if (post == null) {
+            Toast.makeText(this, "포스트를 삭제할 수 없습니다", Toast.LENGTH_SHORT).show();
+            Log.w(TAG, "deletePost: post is null");
+            return;
+        }
+
+        executorService.execute(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(site_url + "api_root/Post/" + post.getId() + "/");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("DELETE");
+                conn.setRequestProperty("Authorization", "Token " + token);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                int responseCode = conn.getResponseCode();
+                Log.d(TAG, "Delete response code: " + responseCode);
+
+                mainHandler.post(() -> {
+                    if (responseCode == HttpURLConnection.HTTP_NO_CONTENT ||
+                        responseCode == HttpURLConnection.HTTP_OK) {
+                        Toast.makeText(this, "포스트가 삭제되었습니다", Toast.LENGTH_SHORT).show();
+                        Log.d(TAG, "Post #" + post.getId() + " deleted successfully");
+                        // 삭제 후 목록 새로고침
+                        onClickDownload(null);
+                    } else {
+                        Toast.makeText(this, "삭제 실패: HTTP " + responseCode, Toast.LENGTH_SHORT).show();
+                        Log.e(TAG, "Delete failed with code: " + responseCode);
+                    }
+                });
+            } catch (IOException e) {
+                Log.e(TAG, "Delete error: " + e.getMessage(), e);
+                mainHandler.post(() ->
+                    Toast.makeText(this, "삭제 중 오류 발생: " + e.getMessage(), Toast.LENGTH_SHORT).show()
+                );
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+        });
     }
 }
