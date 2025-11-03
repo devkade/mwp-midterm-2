@@ -171,3 +171,310 @@ When `clearSession()` is called, remove:
 - Normal usage within 10 minutes maintains session
 - No crashes or data loss during session transitions
 - All test scenarios pass consistently
+
+---
+
+## Implementation Details
+
+### Architecture Change: Volatile Session State
+
+**Initial Design Issue:**
+The original design stored `session_active` in SharedPreferences (persistent storage). This caused process death detection to fail because:
+1. When app backgrounded → `setSessionActive(false)` saved to SharedPreferences
+2. Process killed by system
+3. New process started → Read `session_active=false` from SharedPreferences
+4. **Problem:** Cannot distinguish between "normal background exit" vs "process death"
+
+**Solution: Hybrid Storage Model**
+
+| Data | Storage | Lifetime | Purpose |
+|------|---------|----------|---------|
+| `session_active` | **Volatile memory** (Application class) | Process lifetime only | Process death detection |
+| `last_active_time` | **SharedPreferences** (persistent) | Survives restarts | Inactivity timeout |
+| `auth_token` | **EncryptedSharedPreferences** (persistent) | Until cleared | Authentication |
+
+### Implemented Components
+
+#### 1. PhotoViewerApplication.java
+
+**Location:** `app/src/main/java/com/example/photoviewer/PhotoViewerApplication.java`
+
+**Key Implementation:**
+```java
+// Volatile session state - resets to false when process dies
+private static boolean sessionActive = false;
+
+public static boolean isSessionActive() {
+    return sessionActive;
+}
+
+public static void setSessionActive(boolean active) {
+    sessionActive = active;
+}
+```
+
+**Lifecycle Callbacks:**
+- `onActivityStarted()`: Set `sessionActive = true` (app in foreground)
+- `onActivityStopped()`:
+  - Save `last_active_time` to SharedPreferences
+  - **DO NOT** set `sessionActive = false` (keep it true in memory)
+  - When process dies, `sessionActive` automatically resets to `false`
+
+**Critical Design Point:**
+> We intentionally DO NOT call `setSessionActive(false)` when backgrounding. This allows the volatile memory to serve as a "process alive" indicator. Only process death resets it to false.
+
+#### 2. SecureTokenManager.java
+
+**Location:** `app/src/main/java/com/example/photoviewer/utils/SecureTokenManager.java`
+
+**Changes:**
+- **Removed** `SESSION_ACTIVE_KEY` from SharedPreferences
+- **Removed** `setSessionActive()` and `isSessionActive()` methods (moved to Application)
+- **Kept** `setLastActiveTime()` and `getLastActiveTime()` (persistent storage)
+- Updated `clearSession()` to only clear persistent data (token, username, timestamp)
+
+#### 3. SplashActivity.java
+
+**Location:** `app/src/main/java/com/example/photoviewer/SplashActivity.java`
+
+**Process Death Detection Logic:**
+```java
+boolean sessionActive = PhotoViewerApplication.isSessionActive();
+boolean hasToken = SecureTokenManager.getInstance().hasToken();
+
+if (hasToken && !sessionActive) {
+    // Process death detected: we have a token but sessionActive is false
+    // This means the process was killed (sessionActive reset to false)
+    Log.d(TAG, "Process death detected - clearing session");
+    SecureTokenManager.getInstance().clearSession();
+    return;
+}
+```
+
+**How It Works:**
+1. **Normal startup after clean background:**
+   - Process still alive → `sessionActive = true` (memory preserved)
+   - Check timeout, session valid → Keep session
+
+2. **Startup after process death:**
+   - New process → `sessionActive = false` (volatile reset)
+   - Has token but `sessionActive = false` → **Process died** → Clear session
+
+3. **Startup after 10min timeout:**
+   - Process alive → `sessionActive = true`
+   - Check timestamp → Timeout exceeded → Clear session
+
+### File Changes Summary
+
+```
+Modified Files:
+├── PhotoViewerApplication.java (major changes)
+│   ├── Added: static boolean sessionActive (volatile)
+│   ├── Added: isSessionActive() / setSessionActive() methods
+│   ├── Modified: onActivityStarted() - use Application.setSessionActive()
+│   └── Modified: onActivityStopped() - removed setSessionActive(false) call
+│
+├── SecureTokenManager.java (refactoring)
+│   ├── Removed: SESSION_ACTIVE_KEY constant
+│   ├── Removed: setSessionActive() / isSessionActive() methods
+│   ├── Modified: hasSessionData() - no longer checks session_active
+│   └── Modified: clearSession() - no longer clears session_active
+│
+└── SplashActivity.java (logic update)
+    └── Modified: checkAndClearInvalidSession() - use PhotoViewerApplication.isSessionActive()
+```
+
+---
+
+## Troubleshooting
+
+### Issue #1: Process Death Not Detected (Initial Implementation)
+
+**Symptom:**
+```
+17:16:35.567 - All activities stopped - updating last_active_time and marking app as background
+17:16:35.592 - AFTER setSessionActive(false): session_active=false
+17:16:35.713 - Killing 20052 (process killed)
+17:16:42.482 - Initial session_active: false (new process)
+17:16:42.562 - Session still valid - keeping session ❌ (should have cleared!)
+```
+
+**Root Cause:**
+- `session_active` was stored in SharedPreferences (persistent storage)
+- When app backgrounded → `setSessionActive(false)` saved to disk
+- Process killed → New process read `session_active=false` from disk
+- **Could not distinguish** between:
+  - Normal background exit (user pressed Home, process still alive)
+  - Force close (user killed process from Recents)
+
+**Solution:**
+Move `session_active` to **volatile memory** (Application class static field):
+- Default value: `false` (when process starts)
+- Set to `true` when app enters foreground
+- **Never set to `false`** when backgrounding
+- Only resets to `false` when process dies (automatic)
+
+**Detection Logic:**
+```
+if (hasToken && !sessionActive) {
+    // We have a persisted token (SharedPreferences)
+    // But sessionActive is false (volatile memory)
+    // This only happens when process dies and restarts
+    clearSession();
+}
+```
+
+### Issue #2: SharedPreferences vs Volatile Memory Confusion
+
+**Problem:**
+Initial confusion about when to use persistent vs volatile storage.
+
+**Decision Matrix:**
+
+| Requirement | Storage Type | Reason |
+|-------------|--------------|--------|
+| Survive process death? | SharedPreferences | Data must persist across restarts |
+| Reset on process death? | Volatile memory | Automatic cleanup on process restart |
+| Security sensitive? | EncryptedSharedPreferences | Encryption at rest |
+
+**Applied to Our Data:**
+
+| Data | Choice | Reason |
+|------|--------|--------|
+| `auth_token` | EncryptedSharedPreferences | Persists + encrypted |
+| `last_active_time` | SharedPreferences | Persists (needed for timeout check) |
+| `session_active` | Volatile (Application class) | **Must reset** on process death |
+
+### Issue #3: Lifecycle Callback Timing
+
+**Challenge:**
+Understanding when `onActivityStopped()` is called vs when process is killed.
+
+**Timeline Analysis:**
+```
+Normal Background Flow:
+  User presses Home
+  ├─ onActivityPaused()    ← Activity going to background
+  ├─ onActivityStopped()   ← Activity no longer visible
+  │  └─ Save last_active_time
+  └─ Process MAY be alive (system decides)
+
+Force Close Flow:
+  User swipes from Recents
+  ├─ onActivityStopped()   ← May or may not be called
+  └─ Process.killProcess() ← Immediate termination
+     └─ sessionActive lost (volatile memory cleared)
+```
+
+**Key Insight:**
+> We cannot rely on callbacks to detect force-close. We must use the **absence of data** (volatile memory reset) as the detection signal.
+
+### Issue #4: Testing Process Death
+
+**Challenge:**
+How to reliably test process death scenarios.
+
+**Testing Methods:**
+
+| Method | Command | Simulates |
+|--------|---------|-----------|
+| Force Stop | `adb shell am force-stop com.example.photoviewer` | User force-stopping from Settings |
+| Kill Process | `adb shell am kill com.example.photoviewer` | System killing for memory |
+| Swipe from Recents | Manual UI action | User closing app |
+
+**Recommended Test Flow:**
+1. Login to app
+2. Press Home (background)
+3. Check logcat: `session_active remains: true`
+4. Force stop: `adb shell am force-stop com.example.photoviewer`
+5. Relaunch app
+6. Check logcat: `Initial session_active: false` + `Process death detected`
+
+### Issue #5: First Launch Edge Case
+
+**Scenario:**
+Fresh app install, no SharedPreferences data exists.
+
+**Potential Bug:**
+```java
+if (hasToken && !sessionActive) {
+    clearSession(); // Don't call this if no token exists!
+}
+```
+
+**Solution:**
+Check `hasToken` first:
+```java
+if (!SecureTokenManager.getInstance().hasSessionData()) {
+    // No data exists - first launch, nothing to clear
+    return;
+}
+```
+
+**Implemented in:** `SplashActivity.checkAndClearInvalidSession()`
+
+---
+
+## Testing Results
+
+### Expected Logcat Output
+
+**Scenario 1: Normal Background (Process Alive)**
+```
+PhotoViewerApplication: onActivityStopped (active count: 0)
+PhotoViewerApplication: session_active remains: true (volatile, will reset if process dies)
+PhotoViewerApplication: Set last_active_time to: 1762157795592
+
+[User relaunches app]
+
+PhotoViewerApplication: Initial session_active: true (process still alive)
+SplashActivity: Session still valid - keeping session ✅
+```
+
+**Scenario 2: Process Death**
+```
+PhotoViewerApplication: onActivityStopped (active count: 0)
+PhotoViewerApplication: Set last_active_time to: 1762157795592
+[System kills process]
+
+[User relaunches app - NEW PROCESS]
+
+PhotoViewerApplication: Initial session_active: false (always false on new process) ✅
+SplashActivity: Process death detected (has token but sessionActive=false) ✅
+SecureTokenManager: === CLEARING SESSION ===
+[Redirects to LoginActivity]
+```
+
+**Scenario 3: 10-Minute Timeout**
+```
+PhotoViewerApplication: Set last_active_time to: 1762157795592
+[Wait 11 minutes]
+
+PhotoViewerApplication: Initial session_active: true (process alive)
+SplashActivity: Last active: 1762157795592, Current: 1762158455123, Elapsed: 659s
+SplashActivity: Inactivity timeout exceeded (659s > 600s) - clearing session ✅
+```
+
+---
+
+## Lessons Learned
+
+1. **Persistent vs Volatile Storage:**
+   - Use persistent storage (SharedPreferences) for data that must survive restarts
+   - Use volatile storage (Application class) for data that should reset on restart
+   - Process death detection requires volatile state
+
+2. **Lifecycle Callback Limitations:**
+   - Cannot rely on `onDestroy()` or lifecycle callbacks for force-close detection
+   - System can kill process without calling cleanup methods
+   - Must use "absence of evidence" (volatile reset) instead of "evidence of absence"
+
+3. **Android Process Model:**
+   - Android can kill background processes at any time for memory management
+   - Application class `onCreate()` called on every process start
+   - Static fields reset to default values when process dies
+
+4. **Security Design:**
+   - Session timeout provides defense-in-depth
+   - Process death detection prevents session hijacking via process inspection
+   - Combining both mechanisms provides robust session management

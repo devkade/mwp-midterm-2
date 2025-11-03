@@ -80,6 +80,16 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
 
+        // Check session validity - redirect to login if session is invalid
+        if (!SessionManager.getInstance().isLoggedIn()) {
+            Log.d(TAG, "Session is invalid - redirecting to login");
+            Intent intent = new Intent(MainActivity.this, LoginActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(intent);
+            finish();
+            return;
+        }
+
         textView = findViewById(R.id.textView);
         recyclerView = findViewById(R.id.recyclerView);
         swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
@@ -272,11 +282,13 @@ public class MainActivity extends AppCompatActivity {
                 })
                 .show();
 
-            // 삭제 버튼 클릭 핸들러
-            btnDelete.setOnClickListener(v -> {
-                dialog.dismiss(); // 현재 다이얼로그 닫기
-                showDeleteConfirmDialog(post); // 삭제 확인 다이얼로그 표시
-            });
+            // 삭제 버튼 클릭 핸들러 (버튼이 레이아웃에 있는 경우에만)
+            if (btnDelete != null) {
+                btnDelete.setOnClickListener(v -> {
+                    dialog.dismiss(); // 현재 다이얼로그 닫기
+                    showDeleteConfirmDialog(post); // 삭제 확인 다이얼로그 표시
+                });
+            }
 
             Log.d(TAG, "onPostClicked: dialog shown for post: " + post.getTitle());
 

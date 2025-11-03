@@ -1,0 +1,69 @@
+# Android
+*.iml
+.gradle
+local.properties
+PhotoViewer/.idea/caches
+PhotoViewer/.idea/libraries
+PhotoViewer/.idea/modules.xml
+PhotoViewer/.idea/workspace.xml
+PhotoViewer/.idea/navEditor.xml
+PhotoViewer/.idea/assetWizardSettings.xml
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Django
+# db.sqlite3
+# db.sqlite3-journal
+# media/
+staticfiles/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Other
+*.tmp
+*.bak
+*.cache
+.claude/
+
+CLAUDE.md
+GEMINI.md
