@@ -11,6 +11,7 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -24,6 +25,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import com.google.android.material.textfield.TextInputEditText;
+import com.example.photoviewer.services.SessionManager;
+import com.example.photoviewer.utils.SecureTokenManager;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -59,9 +62,9 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private Post currentEditPost;
     private Bitmap currentEditImage;
+    private int postIdToShowAfterRefresh = -1;
 
     private final String site_url = "http://10.0.2.2:8000/";
-    private final String token = "7aba936bb4d969ede07dbaf5c1c9a14a37e21fb0";
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -69,6 +72,13 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // Initialize SecureTokenManager if not already initialized
+        try {
+            SecureTokenManager.initialize(this);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         textView = findViewById(R.id.textView);
         recyclerView = findViewById(R.id.recyclerView);
@@ -84,6 +94,27 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "Swipe refresh triggered");
             onClickDownload(null);
         });
+
+        // Add logout button to toolbar
+        addLogoutButton();
+    }
+
+    private void addLogoutButton() {
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayShowCustomEnabled(true);
+            Button logoutButton = new Button(this);
+            logoutButton.setText("Logout");
+            logoutButton.setOnClickListener(v -> logout());
+            getSupportActionBar().setCustomView(logoutButton);
+        }
+    }
+
+    private void logout() {
+        SessionManager.getInstance().logout();
+        Intent intent = new Intent(MainActivity.this, SplashActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        finish();
     }
 
     public void onClickDownload(View v) {
@@ -94,7 +125,7 @@ public class MainActivity extends AppCompatActivity {
             try {
                 URL url = new URL(site_url + "api_root/Post/");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestProperty("Authorization", "Token " + token);
+                conn.setRequestProperty("Authorization", "Token " + SessionManager.getInstance().getToken());
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(3000);
                 conn.setReadTimeout(3000);
@@ -181,6 +212,22 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(getApplicationContext(),
                         downloadedPosts.size() + "개의 포스트를 불러왔습니다.",
                         Toast.LENGTH_SHORT).show();
+
+                    // 저장 후 포스트 상세보기를 자동으로 표시해야 하는 경우
+                    if (postIdToShowAfterRefresh > 0) {
+                        Post postToShow = null;
+                        for (Post p : postList) {
+                            if (p.getId() == postIdToShowAfterRefresh) {
+                                postToShow = p;
+                                break;
+                            }
+                        }
+                        if (postToShow != null) {
+                            Log.d(TAG, "Showing post detail for post ID: " + postIdToShowAfterRefresh);
+                            onPostClicked(postToShow);
+                        }
+                        postIdToShowAfterRefresh = -1; // 초기화
+                    }
                 } else {
                     textView.setText("포스트를 불러오지 못했습니다.");
                     Toast.makeText(getApplicationContext(),
@@ -206,7 +253,7 @@ public class MainActivity extends AppCompatActivity {
             ImageView ivPostImage = dialogView.findViewById(R.id.ivPostImage);
             TextView tvPostTitle = dialogView.findViewById(R.id.tvPostTitle);
             TextView tvPostText = dialogView.findViewById(R.id.tvPostText);
-            android.widget.Button btnDelete = dialogView.findViewById(R.id.btnDelete);
+            Button btnDelete = dialogView.findViewById(R.id.btnDeleteEdit);
 
             // Post 데이터로 뷰 채우기
             if (post.getImageBitmap() != null) {
@@ -299,6 +346,13 @@ public class MainActivity extends AppCompatActivity {
                 startActivityForResult(intent, REQUEST_CODE_EDIT_IMAGE);
             });
 
+            // 편집 다이얼로그 표시
+            AlertDialog editDialog = new AlertDialog.Builder(this)
+                .setTitle("포스트 수정")
+                .setView(dialogView)
+                .setNegativeButton("취소", null)
+                .show();
+
             // 저장 버튼 클릭 핸들러
             btnConfirmEdit.setOnClickListener(v -> {
                 String newTitle = etEditTitle.getText().toString().trim();
@@ -313,6 +367,7 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
+                editDialog.dismiss(); // Edit dialog 닫기
                 updatePost(post, newTitle, newContent);
             });
 
@@ -325,13 +380,6 @@ public class MainActivity extends AppCompatActivity {
                     .setNegativeButton("취소", null)
                     .show();
             });
-
-            // 편집 다이얼로그 표시
-            new AlertDialog.Builder(this)
-                .setTitle("포스트 수정")
-                .setView(dialogView)
-                .setNegativeButton("취소", null)
-                .show();
 
             Log.d(TAG, "onEditPost: edit dialog shown for post: " + post.getTitle());
 
@@ -464,7 +512,7 @@ public class MainActivity extends AppCompatActivity {
                 conn.setUseCaches(false);
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Connection", "Keep-Alive");
-                conn.setRequestProperty("Authorization", "Token " + token);
+                conn.setRequestProperty("Authorization", "Token " + SessionManager.getInstance().getToken());
                 conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
 
                 dos = new DataOutputStream(conn.getOutputStream());
@@ -616,7 +664,7 @@ public class MainActivity extends AppCompatActivity {
                 URL url = new URL(site_url + "api_root/Post/" + post.getId() + "/");
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("PUT");
-                conn.setRequestProperty("Authorization", "Token " + token);
+                conn.setRequestProperty("Authorization", "Token " + SessionManager.getInstance().getToken());
                 conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
                 conn.setDoOutput(true);
                 conn.setConnectTimeout(10000);
@@ -664,7 +712,8 @@ public class MainActivity extends AppCompatActivity {
                         (responseCode >= 200 && responseCode < 205)) {
                         Toast.makeText(MainActivity.this, "포스트가 수정되었습니다", Toast.LENGTH_SHORT).show();
                         Log.d(TAG, "Post #" + post.getId() + " updated successfully");
-                        // 수정 후 목록 새로고침
+                        // 수정 후 목록 새로고침 및 포스트 상세보기 자동 표시
+                        postIdToShowAfterRefresh = post.getId();
                         onClickDownload(null);
                     } else {
                         Toast.makeText(MainActivity.this, "수정 실패: HTTP " + responseCode, Toast.LENGTH_SHORT).show();
@@ -712,7 +761,7 @@ public class MainActivity extends AppCompatActivity {
                 URL url = new URL(site_url + "api_root/Post/" + post.getId() + "/");
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("DELETE");
-                conn.setRequestProperty("Authorization", "Token " + token);
+                conn.setRequestProperty("Authorization", "Token " + SessionManager.getInstance().getToken());
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
 
